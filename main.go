@@ -1,15 +1,15 @@
 package main
 
 import (
-	"log"
-	"net/http"
+	"github.com/gin-gonic/gin"
 )
 
 func main() {
-	http.HandleFunc("/login", Login)
-	http.HandleFunc("/home", Home)
-	http.HandleFunc("/refresh", Refresh)
+	router := gin.Default()
+	router.POST("/login", Login)
+	router.GET("/home", Home)
+	router.POST("/refresh", Refresh)
 
-	// start the server on port 8000
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	// start the server on port 8080
+	router.Run()
 }

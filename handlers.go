@@ -6,13 +6,16 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/dgrijalva/jwt-go"
+	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt"
 )
 
 // Create the JWT key used to create the signature
 var jwtKey = []byte("secret_key")
 
 //there are only two valid users in our application
+//The login route will take the users credentials and log them in.
+//For simplification, we’re storing the users information as an in-memory map in our code
 var users = map[string]string{
 	"users1": "password1",
 	"users2": "password2",
@@ -32,12 +35,12 @@ type Claims struct {
 }
 
 // Create the Signin handler
-func Login(w http.ResponseWriter, r *http.Request) {
+func Login(c *gin.Context) {
 	var credentials Credentials
 	// Get the JSON body and decode into credentials
-	err := json.NewDecoder(r.Body).Decode(&credentials)
+	err := json.NewDecoder(c.Request.Body).Decode(&credentials)
 	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
+		c.String(http.StatusBadRequest, "")
 		return
 	}
 
@@ -48,7 +51,7 @@ func Login(w http.ResponseWriter, r *http.Request) {
 	// AND, if it is the same as the password we received, the we can move ahead
 	// if NOT, then we return an "Unauthorized" status
 	if !ok || expectedPassword != credentials.Password {
-		w.WriteHeader(http.StatusUnauthorized)
+		c.String(http.StatusUnauthorized, "")
 		return
 	}
 
@@ -71,13 +74,13 @@ func Login(w http.ResponseWriter, r *http.Request) {
 	tokenString, err := token.SignedString(jwtKey)
 	if err != nil {
 		// If there is an error in creating the JWT return an internal server error
-		w.WriteHeader(http.StatusInternalServerError)
+		c.String(http.StatusInternalServerError, "")
 		return
 	}
 
 	// Finally, we set the client cookie for "token" as the JWT we just generated
 	// we also set an expiry time which is the same as the token itself
-	http.SetCookie(w, &http.Cookie{
+	http.SetCookie(c.Writer, &http.Cookie{
 		Name:    "token",
 		Value:   tokenString,
 		Expires: expirationTime,
@@ -85,23 +88,24 @@ func Login(w http.ResponseWriter, r *http.Request) {
 
 }
 
-func Home(w http.ResponseWriter, r *http.Request) {
+func Home(c *gin.Context) {
 
 	// We can obtain the session token from the requests cookies, which come with every request
-	cookie, err := r.Cookie("token")
+	cookie, err := c.Cookie("token")
 	if err != nil {
 		if err == http.ErrNoCookie {
 			// If the cookie is not set, return an unauthorized status
-			w.WriteHeader(http.StatusUnauthorized)
+			c.IndentedJSON(http.StatusUnauthorized, nil)
 			return
 		}
 		// For any other type of error, return a bad request status
-		w.WriteHeader(http.StatusBadRequest)
+		c.IndentedJSON(http.StatusBadRequest, nil)
 		return
 	}
 
 	// Get the JWT string from the cookie
-	tknStr := cookie.Value
+	//tknStr := cookie.Value
+	tknStr := cookie
 
 	// Initialize a new instance of `Claims`
 	claims := &Claims{}
@@ -116,50 +120,49 @@ func Home(w http.ResponseWriter, r *http.Request) {
 		})
 	if err != nil {
 		if err == jwt.ErrSignatureInvalid {
-			w.WriteHeader(http.StatusUnauthorized)
+			c.IndentedJSON(http.StatusUnauthorized, nil)
 			return
 		}
-		w.WriteHeader(http.StatusBadRequest)
+		c.IndentedJSON(http.StatusBadRequest, nil)
 		return
 	}
 	if !tkn.Valid {
-		w.WriteHeader(http.StatusUnauthorized)
+		c.IndentedJSON(http.StatusUnauthorized, nil)
 		return
 	}
 
 	// Finally, return the welcome message to the user, along with their
 	// username given in the token
-	w.Write([]byte(fmt.Sprintf("Welcome %s!", claims.Username)))
-
+	c.AbortWithStatusJSON(http.StatusAccepted, (fmt.Sprintf("Welcome %s!", claims.Username)))
 }
 
-func Refresh(w http.ResponseWriter, r *http.Request) {
+func Refresh(c *gin.Context) {
 
 	// (BEGIN) The code uptil this point is the same as the first part of the `Welcome` route
-	c, err := r.Cookie("token")
+	co, err := c.Cookie("token")
 	if err != nil {
 		if err == http.ErrNoCookie {
-			w.WriteHeader(http.StatusUnauthorized)
+			c.IndentedJSON(http.StatusUnauthorized, nil)
 			return
 		}
-		w.WriteHeader(http.StatusBadRequest)
+		c.IndentedJSON(http.StatusBadRequest, nil)
 		return
 	}
-	tknStr := c.Value
+	tknStr := co
 	claims := &Claims{}
 	tkn, err := jwt.ParseWithClaims(tknStr, claims, func(token *jwt.Token) (interface{}, error) {
 		return jwtKey, nil
 	})
 	if err != nil {
 		if err == jwt.ErrSignatureInvalid {
-			w.WriteHeader(http.StatusUnauthorized)
+			c.IndentedJSON(http.StatusUnauthorized, nil)
 			return
 		}
-		w.WriteHeader(http.StatusBadRequest)
+		c.IndentedJSON(http.StatusBadRequest, nil)
 		return
 	}
 	if !tkn.Valid {
-		w.WriteHeader(http.StatusUnauthorized)
+		c.IndentedJSON(http.StatusUnauthorized, nil)
 		return
 	}
 	// (END) The code up-till this point is the same as the first part of the `Welcome` route
@@ -168,7 +171,7 @@ func Refresh(w http.ResponseWriter, r *http.Request) {
 	// In this case, a new token will only be issued if the old token is within
 	// 30 seconds of expiry. Otherwise, return a bad request status
 	if time.Unix(claims.ExpiresAt, 0).Sub(time.Now()) > 30*time.Second {
-		w.WriteHeader(http.StatusBadRequest)
+		c.IndentedJSON(http.StatusBadRequest, nil)
 		return
 	}
 
@@ -178,12 +181,12 @@ func Refresh(w http.ResponseWriter, r *http.Request) {
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	tokenString, err := token.SignedString(jwtKey)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
+		c.IndentedJSON(http.StatusInternalServerError, nil)
 		return
 	}
 
 	// Set the new token as the users `token` cookie
-	http.SetCookie(w, &http.Cookie{
+	http.SetCookie(c.Writer, &http.Cookie{
 		Name:    "token",
 		Value:   tokenString,
 		Expires: expirationTime,
